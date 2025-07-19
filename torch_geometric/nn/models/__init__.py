@@ -33,6 +33,7 @@ from .g_retriever import GRetriever
 # Deprecated:
 from torch_geometric.explain.algorithm.captum import (to_captum_input,
                                                       captum_output_to_dicts)
+from .gnan import TensorGNAN
 
 __all__ = classes = [
     'MLP',
@@ -77,4 +78,5 @@ __all__ = classes = [
     'NeuralFingerprint',
     'ViSNet',
     'GRetriever',
+    'TensorGNAN',
 ]
