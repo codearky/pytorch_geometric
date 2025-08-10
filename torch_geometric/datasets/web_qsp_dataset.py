@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from torch import Tensor
 from tqdm import tqdm
+from typing import Callable, Optional
 
 from torch_geometric.data import (
     Data,
@@ -174,6 +175,8 @@ class WebQSPDataset(InMemoryDataset):
         limit: int = -1,
         verbose: bool = False,
         use_pcst: bool = True,
+        pre_transform: Optional[Callable] = None,
+        transform: Optional[Callable] = None,
     ) -> None:
         self.limit = limit
         self.split = split
@@ -186,7 +189,7 @@ class WebQSPDataset(InMemoryDataset):
         '''
         self.verbose = verbose
         self.force_reload = force_reload
-        super().__init__(root, force_reload=force_reload)
+        super().__init__(root, force_reload=force_reload, pre_transform=pre_transform, transform=transform)
 
         if split not in set(self.raw_file_names):
             raise ValueError(f"Invalid 'split' argument (got {split})")

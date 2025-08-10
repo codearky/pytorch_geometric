@@ -87,22 +87,14 @@ class GRetriever(torch.nn.Module):
 
     def encode(
         self,
-        x: Tensor,
-        edge_index: Tensor,
-        batch: Tensor,
-        edge_attr: Optional[Tensor],
+        data,
     ) -> Tensor:
-        x = x.to(self.llm.device)
-        edge_index = edge_index.to(self.llm.device)
-        if edge_attr is not None:
-            edge_attr = edge_attr.to(self.llm.device)
-        batch = batch.to(self.llm.device)
-
-        out = self.gnn(x, edge_index, edge_attr=edge_attr)
-        return scatter(out, batch, dim=0, reduce='mean')
+        out = self.gnn(data)
+        return out
 
     def forward(
         self,
+        data,
         question: List[str],
         x: Tensor,
         edge_index: Tensor,
@@ -127,7 +119,8 @@ class GRetriever(torch.nn.Module):
                 to give to the LLM, such as textified knowledge graphs.
                 (default: :obj:`None`)
         """
-        x = self.encode(x, edge_index, batch, edge_attr)
+        data.to(self.llm.device)
+        x = self.encode(data)
         x = self.projector(x)
         xs = x.split(1, dim=0)
 
@@ -161,6 +154,7 @@ class GRetriever(torch.nn.Module):
     @torch.no_grad()
     def inference(
         self,
+        data,
         question: List[str],
         x: Tensor,
         edge_index: Tensor,
@@ -186,7 +180,8 @@ class GRetriever(torch.nn.Module):
             max_out_tokens (int, optional): How many tokens for the LLM to
                 generate. (default: :obj:`32`)
         """
-        x = self.encode(x, edge_index, batch, edge_attr)
+        data.to(self.llm.device)
+        x = self.encode(data)
         x = self.projector(x)
         xs = x.split(1, dim=0)
 

@@ -22,9 +22,10 @@ from tqdm import tqdm
 
 from torch_geometric import seed_everything
 from torch_geometric.datasets import WebQSPDataset
-from torch_geometric.loader import DataLoader
-from torch_geometric.nn.models import GAT, GRetriever
+from torch_geometric.loader.gnan_dataloader import GNANDataLoader
+from torch_geometric.nn.models import GRetriever, TensorGNAN
 from torch_geometric.nn.nlp import LLM
+from torch_geometric.transforms.gnan import PreprocessDistances
 
 
 def compute_metrics(eval_output):
@@ -92,7 +93,7 @@ def get_loss(model, batch, model_save_name) -> Tensor:
     if model_save_name == 'llm':
         return model(batch.question, batch.label, batch.desc)
     else:
-        return model(batch.question, batch.x, batch.edge_index, batch.batch,
+        return model(batch, batch.question, batch.x, batch.edge_index, batch.batch,
                      batch.label, batch.edge_attr, batch.desc)
 
 
@@ -100,7 +101,7 @@ def inference_step(model, batch, model_save_name):
     if model_save_name == 'llm':
         return model.inference(batch.question, batch.desc)
     else:
-        return model.inference(batch.question, batch.x, batch.edge_index,
+        return model.inference(batch, batch.question, batch.x, batch.edge_index,
                                batch.batch, batch.edge_attr, batch.desc)
 
 
@@ -130,28 +131,29 @@ def train(
     start_time = time.time()
     path = osp.dirname(osp.realpath(__file__))
     path = osp.join(path, '..', '..', 'data', 'WebQSPDataset')
-    train_dataset = WebQSPDataset(path, split='train')
-    val_dataset = WebQSPDataset(path, split='val')
-    test_dataset = WebQSPDataset(path, split='test')
+    train_dataset = WebQSPDataset(path, split='train', transform=PreprocessDistances())
+    val_dataset = WebQSPDataset(path, split='val', transform=PreprocessDistances())
+    test_dataset = WebQSPDataset(path, split='test', transform=PreprocessDistances())
 
     seed_everything(42)
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size,
-                              drop_last=True, pin_memory=True, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=eval_batch_size,
-                            drop_last=False, pin_memory=True, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=eval_batch_size,
+    train_loader = GNANDataLoader(train_dataset, batch_size=batch_size,
+                              drop_last=True, pin_memory=True, shuffle=True,)
+    val_loader = GNANDataLoader(val_dataset, batch_size=eval_batch_size,
+                            drop_last=False, pin_memory=True, shuffle=False )
+    test_loader = GNANDataLoader(test_dataset, batch_size=eval_batch_size,
                              drop_last=False, pin_memory=True, shuffle=False)
 
     # To clean up after Data Preproc
     gc.collect()
     torch.cuda.empty_cache()
-    gnn = GAT(
+    gnn = TensorGNAN(
         in_channels=1024,
         hidden_channels=hidden_channels,
         out_channels=1024,
-        num_layers=num_gnn_layers,
-        heads=4,
+        n_layers=num_gnn_layers,
+        normalize_rho=False,
+        feature_groups=[list(range(1024))],
     )
     if tiny_llama:
         llm = LLM(
@@ -189,6 +191,7 @@ def train(
         epoch_str = f'Epoch: {epoch + 1}|{num_epochs}'
         loader = tqdm(train_loader, desc=epoch_str)
         for step, batch in enumerate(loader):
+            batch.to(model.llm.device)
             optimizer.zero_grad()
             loss = get_loss(model, batch, model_save_name)
             loss.backward()

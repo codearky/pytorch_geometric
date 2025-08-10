@@ -1,0 +1,7 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Instructions for conda env
+1. When running commands in terminal always use the `pyg` conda env

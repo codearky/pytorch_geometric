@@ -265,7 +265,7 @@ class TensorGNAN(nn.Module):
         return rho
 
     def forward(self, data: Data | Batch,
-                node_ids: OptTensor = None) -> torch.Tensor:
+                node_ids: OptTensor = None, edge_attr: OptTensor = None) -> torch.Tensor:
         x: torch.Tensor = data.x  # type: ignore # [N, F]
         dist: torch.Tensor = data.node_distances  # type: ignore # [N, N]
         norm: torch.Tensor = data.normalization_matrix  # type: ignore # [N, N]
