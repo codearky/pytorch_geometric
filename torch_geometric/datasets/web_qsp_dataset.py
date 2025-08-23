@@ -49,28 +49,25 @@ def retrieval_via_pcst(
     verbosity_level = 0
     if topk > 0:
         n_prizes = torch.nn.CosineSimilarity(dim=-1)(q_emb, data.x)
-        topk = min(topk, data.num_nodes)
-        _, topk_n_indices = torch.topk(n_prizes, topk, largest=True)
-
+        k = min(topk, data.num_nodes)
+        _, topk_n_indices = torch.topk(n_prizes, k, largest=True)
+        # Strong rank-based prizes scaled to encourage larger trees
         n_prizes = torch.zeros_like(n_prizes)
-        n_prizes[topk_n_indices] = torch.arange(topk, 0, -1).float()
+        rank_weights = torch.linspace(k, 1, steps=k, dtype=n_prizes.dtype)
+        n_prizes[topk_n_indices] = rank_weights * 5.0
     else:
         n_prizes = torch.zeros(data.num_nodes)
 
     if topk_e > 0:
         e_prizes = torch.nn.CosineSimilarity(dim=-1)(q_emb, data.edge_attr)
-        topk_e = min(topk_e, e_prizes.unique().size(0))
-
-        topk_e_values, _ = torch.topk(e_prizes.unique(), topk_e, largest=True)
-        e_prizes[e_prizes < topk_e_values[-1]] = 0.0
-        last_topk_e_value = topk_e
-        for k in range(topk_e):
-            indices = e_prizes == topk_e_values[k]
-            value = min((topk_e - k) / sum(indices), last_topk_e_value - c)
-            e_prizes[indices] = value
-            last_topk_e_value = value * (1 - c)
-        # reduce the cost of the edges such that at least one edge is selected
-        cost_e = min(cost_e, e_prizes.max().item() * (1 - c / 2))
+        k = min(topk_e, e_prizes.numel())
+        _, topk_e_indices = torch.topk(e_prizes, k, largest=True)
+        # Strong rank-based edge prizes
+        e_rank = torch.linspace(k, 1, steps=k, dtype=e_prizes.dtype) * 2.0
+        e_prizes = torch.zeros_like(e_prizes)
+        e_prizes[topk_e_indices] = e_rank
+        # Encourage including selected edges
+        cost_e = min(cost_e, e_rank.max().item() * (1 - c / 2))
     else:
         e_prizes = torch.zeros(data.num_edges)
 
@@ -117,6 +114,15 @@ def retrieval_via_pcst(
     selected_nodes = np.unique(
         np.concatenate(
             [selected_nodes, edge_index[0].numpy(), edge_index[1].numpy()]))
+
+    # Verbose: report sizes
+    if verbosity_level == 0:
+        pass
+    else:
+        try:
+            print(f"PCST selected nodes: {len(selected_nodes)}, edges: {len(selected_edges)}")
+        except Exception:
+            pass
 
     n = textual_nodes.iloc[selected_nodes]
     e = textual_edges.iloc[selected_edges]
@@ -314,14 +320,18 @@ class WebQSPDataset(InMemoryDataset):
                 graph["node_idx"]].reset_index()
             textual_edges = self.textual_edges.iloc[
                 graph["edge_idx"]].reset_index()
+            # PCST parameters:
+            # - topk: number of top-scoring nodes to consider as prizes
+            # - topk_e: number of top-scoring edges to consider as prizes  
+            # - cost_e: edge cost threshold (lower = more edges included)
             pcst_subgraph, desc = retrieval_via_pcst(
                 graph,
                 q_embs[index],
                 textual_nodes,
                 textual_edges,
-                topk=3,
-                topk_e=5,
-                cost_e=0.5,
+                topk=100,  # more relevant nodes
+                topk_e=200,  # more relevant edges
+                cost_e=0.05,  # lower edge cost encourages larger trees
                 override=not self.use_pcst,
             )
             question = f"Question: {data_i['question']}\nAnswer: "

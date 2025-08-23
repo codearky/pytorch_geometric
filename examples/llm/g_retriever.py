@@ -13,6 +13,7 @@ import math
 import os.path as osp
 import re
 import time
+import io
 
 import pandas as pd
 import torch
@@ -114,6 +115,7 @@ def train(
     lr,
     checkpointing=False,
     tiny_llama=False,
+    use_pcst=True,
 ):
     def adjust_learning_rate(param_group, LR, epoch):
         # Decay the learning rate with half-cycle cosine after warmup
@@ -131,9 +133,9 @@ def train(
     start_time = time.time()
     path = osp.dirname(osp.realpath(__file__))
     path = osp.join(path, '..', '..', 'data', 'WebQSPDataset')
-    train_dataset = WebQSPDataset(path, split='train', transform=PreprocessDistances())
-    val_dataset = WebQSPDataset(path, split='val', transform=PreprocessDistances())
-    test_dataset = WebQSPDataset(path, split='test', transform=PreprocessDistances())
+    train_dataset = WebQSPDataset(path, split='train', transform=PreprocessDistances(), use_pcst=use_pcst, verbose=True)
+    val_dataset = WebQSPDataset(path, split='val', transform=PreprocessDistances(), use_pcst=use_pcst, verbose=True)
+    test_dataset = WebQSPDataset(path, split='test', transform=PreprocessDistances(), use_pcst=use_pcst, verbose=True)
 
     seed_everything(42)
 
@@ -250,6 +252,57 @@ def train(
             eval_output.append(eval_data)
         progress_bar_test.update(1)
 
+    # Compute and display node importance for two random test samples
+    if model_save_name != 'llm':
+        print("\nNode importance on 2 random test examples:")
+        sample_indices = torch.randperm(len(test_dataset))[:10].tolist()
+        for idx in sample_indices:
+            data_i = test_dataset[idx]
+            data_i = data_i.to(model.llm.device)
+            with torch.no_grad():
+                contrib = model.gnn.node_importance(data_i)  # [N, C]
+                scores = contrib.sum(dim=1)  # [N]
+                topk = min(10, scores.numel())
+                top_vals, top_idx = torch.topk(scores, k=topk)
+
+                # Generate model answer for this single example
+                q_list = [data_i.question if isinstance(data_i.question, str) else (data_i.question[0] if len(data_i.question) > 0 else '')]
+                desc_list = [data_i.desc if isinstance(data_i.desc, str) else (data_i.desc[0] if len(data_i.desc) > 0 else '')]
+                batch_vec = getattr(data_i, 'batch', None)
+                if batch_vec is None:
+                    batch_vec = torch.zeros(data_i.x.size(0), dtype=torch.long, device=data_i.x.device)
+                pred_list = model.inference(
+                    data_i,
+                    q_list,
+                    data_i.x,
+                    data_i.edge_index,
+                    batch_vec,
+                    data_i.edge_attr,
+                    additional_text_context=desc_list,
+                )
+                model_answer = pred_list[0] if isinstance(pred_list, (list, tuple)) and len(pred_list) > 0 else str(pred_list)
+
+            # Parse node words from desc (nodes CSV concatenated with edges CSV)
+            desc = data_i.desc
+            sep = '\nsrc,edge_attr,dst\n'
+            pos = desc.find(sep)
+            nodes_csv = desc[:pos] if pos != -1 else desc
+            try:
+                nodes_df = pd.read_csv(io.StringIO(nodes_csv))
+                word_col = 'node_attr' if 'node_attr' in nodes_df.columns else nodes_df.columns[-1]
+                words = nodes_df[word_col].astype(str).tolist()
+            except Exception:
+                words = []
+
+            q_str = data_i.question if isinstance(data_i.question, str) else (data_i.question[0] if len(data_i.question) > 0 else '')
+            print(f"\nExample idx={idx}")
+            print(f"Question: {q_str}")
+            print(f"Model answer: {model_answer}")
+            for rank in range(topk):
+                j = int(top_idx[rank])
+                w = words[j] if j < len(words) else f'<node {j}>'
+                print(f"{rank + 1}. {w} | score={float(top_vals[rank]):.4f}")
+
     compute_metrics(eval_output)
     print(f"Total Training Time: {time.time() - start_time:2f}s")
     save_params_dict(model, f'{model_save_name}.pt')
@@ -266,6 +319,7 @@ if __name__ == '__main__':
     parser.add_argument('--eval_batch_size', type=int, default=16)
     parser.add_argument('--checkpointing', action='store_true')
     parser.add_argument('--tiny_llama', action='store_true')
+    parser.add_argument('--no_pcst', action='store_true', help='Disable PCST to use full graphs instead of subgraphs')
     args = parser.parse_args()
 
     start_time = time.time()
@@ -278,5 +332,6 @@ if __name__ == '__main__':
         args.lr,
         checkpointing=args.checkpointing,
         tiny_llama=args.tiny_llama,
+        use_pcst=not args.no_pcst,
     )
     print(f"Total Time: {time.time() - start_time:2f}s")
