@@ -50,7 +50,9 @@ class GRetriever(torch.nn.Module):
         super().__init__()
 
         self.llm = llm
-        self.gnn = gnn.to(self.llm.device)
+        # self.gnn = gnn.to(self.llm.device)
+        self.gnn_device = "cuda:1" # "cuda:1" if str(self.llm.device) == "cuda:0" else "cuda:0"
+        self.gnn = gnn.to(self.gnn_device)
 
         self.word_embedding = self.llm.word_embedding
         self.llm_generator = self.llm.llm
@@ -89,6 +91,7 @@ class GRetriever(torch.nn.Module):
         self,
         data,
     ) -> Tensor:
+        data.to(self.gnn_device)
         out = self.gnn(data)
         return out
 
@@ -180,8 +183,8 @@ class GRetriever(torch.nn.Module):
             max_out_tokens (int, optional): How many tokens for the LLM to
                 generate. (default: :obj:`32`)
         """
-        data.to(self.llm.device)
         x = self.encode(data)
+        x.to(self.llm.device)
         x = self.projector(x)
         xs = x.split(1, dim=0)
 
