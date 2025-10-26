@@ -122,8 +122,8 @@ class GRetriever(torch.nn.Module):
                 to give to the LLM, such as textified knowledge graphs.
                 (default: :obj:`None`)
         """
-        data.to(self.llm.device)
         x = self.encode(data)
+        x = x.to(self.llm.device)
         x = self.projector(x)
         xs = x.split(1, dim=0)
 
