@@ -184,7 +184,7 @@ class GRetriever(torch.nn.Module):
                 generate. (default: :obj:`32`)
         """
         x = self.encode(data)
-        x.to(self.llm.device)
+        x = x.to(self.llm.device)
         x = self.projector(x)
         xs = x.split(1, dim=0)
 
