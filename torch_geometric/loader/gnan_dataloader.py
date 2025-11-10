@@ -40,8 +40,38 @@ class GNANCollater:
     ):
         self.follow_batch = follow_batch
         self.exclude_keys = exclude_keys
+        self.skip_mode = False
 
     def __call__(self, data_list: List[BaseData]) -> Batch:
+        # When in skip mode, return a minimal batch without expensive operations
+        if self.skip_mode:
+            # Temporarily remove expensive attributes to avoid batching them
+            saved_attrs = []
+            for data in data_list:
+                attrs = {}
+                if hasattr(data, 'node_distances'):
+                    attrs['node_distances'] = data.node_distances
+                    delattr(data, 'node_distances')
+                if hasattr(data, 'normalization_matrix'):
+                    attrs['normalization_matrix'] = data.normalization_matrix
+                    delattr(data, 'normalization_matrix')
+                saved_attrs.append(attrs)
+            
+            # Create a minimal batch structure
+            batch = Batch.from_data_list(
+                data_list,
+                follow_batch=self.follow_batch,
+                exclude_keys=self.exclude_keys,
+            )
+            
+            # Restore attributes to original data objects
+            for data, attrs in zip(data_list, saved_attrs):
+                for key, value in attrs.items():
+                    setattr(data, key, value)
+            
+            return batch
+        
+        # Normal mode: perform expensive matrix operations
         node_distances_list = []
         normalization_matrix_list = []
 
@@ -119,10 +149,25 @@ class GNANDataLoader(PyTorchDataLoader):
         # Remove for PyTorch Lightning:
         kwargs.pop('collate_fn', None)
 
+        # Store collater so we can control skip mode
+        self._collater = GNANCollater(follow_batch, exclude_keys)
+
         super().__init__(
             dataset,
             batch_size,
             shuffle,
-            collate_fn=GNANCollater(follow_batch, exclude_keys),
+            collate_fn=self._collater,
             **kwargs,
         )
+    
+    def set_skip_mode(self, skip_mode: bool):
+        """Enable or disable skip mode for fast-forwarding through samples.
+        
+        When skip_mode is True, the expensive block-diagonal matrix operations
+        are bypassed, allowing for faster iteration when samples will be skipped
+        (e.g., when resuming training from a checkpoint).
+        
+        Args:
+            skip_mode (bool): If True, skip expensive matrix operations.
+        """
+        self._collater.skip_mode = skip_mode
