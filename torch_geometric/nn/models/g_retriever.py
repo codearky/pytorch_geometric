@@ -51,7 +51,7 @@ class GRetriever(torch.nn.Module):
 
         self.llm = llm
         # self.gnn = gnn.to(self.llm.device)
-        self.gnn_device = "cuda:1" # "cuda:1" if str(self.llm.device) == "cuda:0" else "cuda:0"
+        self.gnn_device = "cuda:0" # "cuda:1" if str(self.llm.device) == "cuda:0" else "cuda:0"
         self.gnn = gnn.to(self.gnn_device)
 
         self.word_embedding = self.llm.word_embedding
@@ -92,7 +92,20 @@ class GRetriever(torch.nn.Module):
         data,
     ) -> Tensor:
         data.to(self.gnn_device)
-        out = self.gnn(data)
+        # Check if GNN expects a data object or individual arguments
+        # TensorGNAN and similar models accept data objects
+        # GAT and BasicGNN models expect (x, edge_index, ...) arguments
+        try:
+            # Try calling with data object first (for TensorGNAN, etc.)
+            out = self.gnn(data)
+        except TypeError:
+            # Fall back to calling with individual arguments (for GAT, etc.)
+            out = self.gnn(
+                data.x,
+                data.edge_index,
+                edge_attr=getattr(data, 'edge_attr', None),
+                batch=getattr(data, 'batch', None),
+            )
         return out
 
     def forward(
